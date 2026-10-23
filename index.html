@@ -591,32 +591,57 @@ function showResult(){if(castleRun){showCastleResult();return}startMusic('result
 // ステージのベスト５は従来の保存形式を維持。すべての挑戦は名前別の履歴に追加する。
 const SAVE_SLOT_PREFIX='kukuquest_player_v4_';
 function migrateNamedRecords(){
+ // 名前変更のたびに読み込む旧記録が残っていても、取り込み済みを判定して安全に統合。
+ // 旧記録は一切削除・上書きしない。
  try{
-  if(localStorage.getItem(SAVE_SLOT_PREFIX+'migrated')==='yes')return;
+  const marker='kukuquest_player_v4_imported_sources_v2';
+  const seen=JSON.parse(localStorage.getItem(marker)||'{}');
   const keys=Array.from({length:localStorage.length},(_,i)=>localStorage.key(i)).filter(Boolean);
-  const legacyHistory='kukuquest_history_v2_20q_';
-  const legacyBests='kukuquest_v2_20q_';
-  const stages=stageCatalog().map(x=>x.key);
-  let hist=[];
+  const historyPrefix='kukuquest_history_v2_20q_';
+  const bestPrefix='kukuquest_v2_20q_';
+  const currentHistoryKey=SAVE_SLOT_PREFIX+'history';
+  let history=JSON.parse(localStorage.getItem(currentHistoryKey)||'[]');
+  if(!Array.isArray(history))history=[];
+  let changed=false;
   for(const key of keys){
-   if(key.startsWith(legacyHistory)){
-    try{const data=JSON.parse(localStorage.getItem(key)||'[]');if(Array.isArray(data))hist.push(...data)}catch{}
+   if(!key.startsWith(historyPrefix))continue;
+   const raw=localStorage.getItem(key)||'[]';
+   if(seen[key]===raw)continue;
+   const old=JSON.parse(raw);
+   if(!Array.isArray(old))continue;
+   // 旧記録の追記に対応。既存データの内容を比較して二重取り込みを防ぐ。
+   const count=new Map();
+   for(const record of history){const k=JSON.stringify(record);count.set(k,(count.get(k)||0)+1)}
+   for(const record of old){
+    const k=JSON.stringify(record),n=count.get(k)||0;
+    if(n){count.set(k,n-1)}else{history.push(record);changed=true}
    }
+   seen[key]=raw;
   }
-  if(hist.length)localStorage.setItem(SAVE_SLOT_PREFIX+'history',JSON.stringify(hist));
+  if(changed)localStorage.setItem(currentHistoryKey,JSON.stringify(history));
+  const stages=stageCatalog().map(x=>x.key);
   for(const stageKey of stages){
-   const combined=[];
+   const target=SAVE_SLOT_PREFIX+'best_'+stageKey;
+   let current=JSON.parse(localStorage.getItem(target)||'[]');
+   if(!Array.isArray(current))current=[];
+   let updated=false;
    for(const key of keys){
-    if(key.startsWith(legacyBests)&&key.endsWith('_'+stageKey)){
-     try{const data=JSON.parse(localStorage.getItem(key)||'[]');if(Array.isArray(data))combined.push(...data)}catch{}
-    }
+    if(!key.startsWith(bestPrefix)||!key.endsWith('_'+stageKey))continue;
+    const raw=localStorage.getItem(key)||'[]';
+    if(seen[key]===raw)continue;
+    const old=JSON.parse(raw);
+    if(!Array.isArray(old))continue;
+    current.push(...old);
+    seen[key]=raw;
+    updated=true;
    }
-   if(combined.length){
-    combined.sort((a,b)=>Number(a.time)-Number(b.time));
-    localStorage.setItem(SAVE_SLOT_PREFIX+'best_'+stageKey,JSON.stringify(combined.slice(0,5)));
+   if(updated){
+    const unique=Array.from(new Map(current.map(x=>[JSON.stringify(x),x])).values());
+    unique.sort((a,b)=>Number(a.time)-Number(b.time));
+    localStorage.setItem(target,JSON.stringify(unique.slice(0,5)));
    }
   }
-  localStorage.setItem(SAVE_SLOT_PREFIX+'migrated','yes');
+  localStorage.setItem(marker,JSON.stringify(seen));
  }catch(e){console.warn('記録の引き継ぎに失敗しました',e)}
 }
 function historyKey(){migrateNamedRecords();return SAVE_SLOT_PREFIX+'history'}
